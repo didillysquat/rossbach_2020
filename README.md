@@ -4,7 +4,6 @@ and between-sample distance figure in the manuscript.
 
 The generated figure is:
 ![dist_fig](./s_fig_braycurtis_sqrt.svg)
-<img src="./s_fig_braycurtis_sqrt.svg">
 
 The following data files are required to be in the same directory as rossbach_hume_2020.py
 - 109_20200609_2020-06-09_11-59-06.357078.profiles.absolute.abund_and_meta.txt
