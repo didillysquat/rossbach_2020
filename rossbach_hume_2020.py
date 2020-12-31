@@ -6,81 +6,52 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import itertools
-import seaborn as sb
+from skbio.stats.distance import permanova, DistanceMatrix, permdisp
+import ecopy as ep
 
 DEGREE_SIGN = u'\N{DEGREE SIGN}'
 
 class Susann:
     def __init__(self):
 
-        fig, ax = plt.subplots(1,3, figsize=(16,5))
-        path_to_dist = '2020-06-09_11-59-06.357078_braycurtis_sample_distances_A_sqrt.dist'
+        self.fig, self.ax = plt.subplots(1,3, figsize=(16,5))
+
+        path_to_seq_rel_seq_abund = '109_20200609_2020-06-09_11-59-06.357078.seqs.relative.abund_only.txt'
         path_to_meta = '109_20200609_2020-06-09_11-59-06.357078.seqs.absolute.meta_only.txt'
         path_to_profile = '109_20200609_2020-06-09_11-59-06.357078.profiles.absolute.abund_and_meta.txt'
         profile_df = pd.read_table(path_to_profile, skiprows=6, index_col=1)
         profile_df = profile_df.iloc[:-2].astype(float).astype(int)
         a1_samples = list(profile_df[profile_df['A1'] != 0].index)
 
-        with open(path_to_dist, 'r') as f:
-            d = [_.rstrip().split('\t') for _ in f]
-        samples = [_[0] for _ in d]
-        ids = [_[1] for _ in d]
-        data = [_[2:] for _ in d]
-        dist_df = pd.DataFrame(data, index=samples, columns=samples).astype(float)
-        to_drop = ['S1_H2O', 'S3_H2O', 'extraction_neg', 'milliq_neg']
-        dist_df = dist_df.drop(columns=to_drop, index=to_drop)
-        
-        meta_df = pd.read_csv(path_to_meta, sep='\t')
-        meta_df = meta_df.iloc[:-3,]
-        meta_df.set_index('sample_name', drop=True, inplace=True)
-        meta_df = meta_df.drop(index=to_drop)
-        meta_df = meta_df.loc[:,['collection_latitude', 'collection_longitude']]
-        meta_df['loc'] = [f'{latitude},{longitude}' for longitude, latitude in zip(meta_df['collection_longitude'], meta_df['collection_latitude'])]
-        meta_df.sort_values(by='collection_latitude', inplace=True, ascending=False)
-        unique_loc = meta_df['loc'].unique()
-        site_names = [f'29{DEGREE_SIGN} Gulf of Aqaba', f'27{DEGREE_SIGN} Duba', 'Thuwal', 'Al Lith', 'Farasan Banks']
-        loc_to_site_dict = {loc: site_name for loc, site_name in zip(unique_loc, site_names)}
+        self.dist_df, to_drop, self.id_to_name_dict = self._make_dist_df()
+
+        # make an abundance dataframe that is sample by sequence (Symbiodinium sequences only)
+        # for running the simper analysis
+        self.abund_df = pd.read_csv(path_to_seq_rel_seq_abund, sep='\t', index_col=0)
+        self.abund_df = self.abund_df.loc[:,
+                        [_ for _ in list(self.abund_df) if (_.startswith('A') or _.endswith('_A'))]]
+        # Drop the negative samples etc that were dropped from the dist matrix.
+        self.abund_df = self.abund_df.loc[[uid for uid in self.abund_df.index if str(uid) in self.id_to_name_dict.keys()],:]
+        self.abund_df.index = [self.id_to_name_dict[str(_)] for _ in self.abund_df.index.values]
+        # The group names
+        group_names = [str(_).split('_')[0] for _ in self.abund_df.index]
+        simper_result = ep.simper(data=self.abund_df, factor=group_names)
+        self._make_meta_df(path_to_meta, to_drop)
+        self.unique_loc = self.meta_df['loc'].unique()
+        self.site_names = [
+            f'29{DEGREE_SIGN} Gulf of Aqaba', f'27{DEGREE_SIGN} Duba', f'22{DEGREE_SIGN} Thuwal', f'20{DEGREE_SIGN} Al Lith', f'18{DEGREE_SIGN} Farasan Banks'
+        ]
+        self.loc_to_site_dict = {loc: site_name for loc, site_name in zip(self.unique_loc, self.site_names)}
+
+        # compute the permanova
+        print('running permdisp\n\n')
+        print(permdisp(distance_matrix=DistanceMatrix(self.dist_df),
+                        grouping=[_.split('_')[0] for _ in list(self.dist_df)], permutations=999))
+        print('running permanova\n\n')
+        print(permanova(distance_matrix=DistanceMatrix(self.dist_df), grouping=[_.split('_')[0] for _ in list(self.dist_df)], permutations=9999))
 
         # now run the pcoa
-        pcoa_df_raw = pcoa(dist_df)
-        pcoa_df = pcoa_df_raw.samples
-        pcoa_df.index = dist_df.index
-        colours = []
-        # We want to differentiate between the sites with symbols as well as colours
-        # for colourblind.
-        shape_dict = {loc: symbol for loc, symbol in zip(unique_loc, reversed(["o", "s", "+", "^", "1"]),)}
-        cols = reversed([d['color'] for d in list(mpl.rcParams["axes.prop_cycle"][:len(site_names)])])
-        col_dict = {loc: col for loc, col in zip(unique_loc, cols)}
-        for loc in unique_loc:
-            samples = meta_df[meta_df['loc'] == loc].index
-            scat = ax[0].plot(pcoa_df.loc[samples, 'PC1'], pcoa_df.loc[samples, 'PC2'], linestyle='none',
-                                 label=loc, marker=shape_dict[loc], fillstyle='none', c=col_dict[loc])
-            colours.append(scat[0].get_color())
-        ax[0].set_xlabel(f'PC1 {pcoa_df_raw.proportion_explained[0]:.2f}')
-        ax[0].set_ylabel(f'PC2 {pcoa_df_raw.proportion_explained[1]:.2f}')
-
-        # Plot an arrow next to the A1 samples
-        a1_samples_pcoa_one = [_ for _ in pcoa_df.index if _ in a1_samples]
-        scat = ax[0].plot(pcoa_df.loc[a1_samples_pcoa_one, 'PC1'] + 0.04, pcoa_df.loc[a1_samples_pcoa_one, 'PC2'],
-                          linestyle='none', marker='<', c='black')
-
-        for loc, c in zip(unique_loc, colours):
-            samples = meta_df[meta_df['loc'] == loc].index
-            ax[1].plot(pcoa_df.loc[samples, 'PC1'], pcoa_df.loc[samples, 'PC3'], c=c, label=loc_to_site_dict[loc],
-                       linestyle='none', marker=shape_dict[loc], fillstyle='none')
-        ax[1].set_xlabel(f'PC1 {pcoa_df_raw.proportion_explained[0]:.2f}')
-        ax[1].set_ylabel(f'PC3 {pcoa_df_raw.proportion_explained[2]:.2f}')
-        
-        ax[1].legend(loc='upper right', fontsize='x-small')
-
-        # Plot an arrow next to the A1 samples
-        scat = ax[1].plot(pcoa_df.loc[a1_samples_pcoa_one, 'PC1'] + 0.04, pcoa_df.loc[a1_samples_pcoa_one, 'PC3'],
-                          linestyle='none', marker='<', c='black')
-
-        self._set_lims(ax=ax[0])
-        self._set_lims(ax=ax[1])
-        ax[0].set_aspect('equal', 'box')
-        ax[1].set_aspect('equal', 'box')
+        self._plot_pcoa_plots(a1_samples)
         # I want to add an additional figure here which will be better for quantifying
         # the distances between and within the sites. For each site I want to have
         # one bar that is coloured the same colour of the site, one bar for each of the other
@@ -91,70 +62,147 @@ class Susann:
 
         # we can put the results into a df where each row is a site and the columns
         # are the sites plus one extra for the overall average distance
-        cols = list(unique_loc)
+        cols = list(self.unique_loc)
         cols.append('between_all')
-        result_df = pd.DataFrame(index=unique_loc, columns=cols)
-        stdev_df = pd.DataFrame(index=unique_loc, columns=cols)
-        for site_self in result_df.index:
-            for site_compare in list(result_df):
-                # Here we do the computations
-                if site_self == site_compare:
-                    # Then we want to be doing the within site average distance
-                    # Get a list of the sites
-                    samples = meta_df[meta_df['loc']==site_self].index
-                    tot_dist = [dist_df.at[site_1, site_2] for (site_1, site_2) in itertools.combinations(samples, 2)]
-                    result_df.at[site_self, site_compare] = sum(tot_dist)/len(tot_dist)
-                    stdev_df.at[site_self, site_compare] = np.std(tot_dist)
-                elif site_compare == 'between_all':
-                    # then we want to be doing the overall distance to other sites
-                    samples = meta_df[meta_df['loc']==site_self].index
-                    other_samples = meta_df[meta_df['loc']!=site_self].index
-                    tot_dist = []
-                    for s in samples:
-                        for o_s in other_samples:
-                            tot_dist.append(dist_df.at[s, o_s])
-                    result_df.at[site_self, site_compare] = sum(tot_dist)/len(tot_dist)
-                    stdev_df.at[site_self, site_compare] = np.std(tot_dist)
-                else:
-                    # Then we want to be doing the specific between site average distance
-                    samples_in = meta_df[meta_df['loc'] == site_self].index
-                    samples_out = meta_df[meta_df['loc'] == site_compare].index
-                    tot_dist = []
-                    for s_in in samples_in:
-                        for s_out in samples_out:
-                            tot_dist.append(dist_df.at[s_in, s_out])
-                    result_df.at[site_self, site_compare] = sum(tot_dist)/len(tot_dist)
-                    stdev_df.at[site_self, site_compare] = np.std(tot_dist)
+        self.result_df = pd.DataFrame(index=self.unique_loc, columns=cols)
+        self.stdev_df = pd.DataFrame(index=self.unique_loc, columns=cols)
+        self._calc_pw_distances()
         # for mat df
-        result_df = result_df.astype(float)
-        result_df.columns = [loc_to_site_dict[_] if _ in loc_to_site_dict else 'between_all' for _ in list(result_df)]
-        result_df.index = [loc_to_site_dict[_] if _ in loc_to_site_dict else 'between_all' for _ in result_df.index.values]
-        result_df_heat = result_df.iloc[:, :-1]
-        result_df_heat = result_df_heat.where(np.tril(np.ones(result_df_heat.shape)).astype(np.bool))
-        heat_map = ax[2].imshow(result_df_heat)
-        ax[2].set_xticks(np.arange(len(list(result_df_heat))))
-        ax[2].set_yticks(np.arange(len(result_df_heat.index)))
-        # ... and label them with the respective list entries
-        ax[2].set_xticklabels(list(result_df_heat), rotation='vertical')
-        ax[2].set_yticklabels(result_df_heat.index.values)
-        plt.colorbar(mappable=heat_map, ax=ax[2])
-        # import matplotlib.colors as mcol
-        # cm1 = mcol.LinearSegmentedColormap.from_list("MyCmapName", ["b", "r"])
-        # sb.heatmap(ax=ax[2], square=True, data=result_df_heat, cmap=cm1)
-        # annotate
-        for i in range(len(list(result_df_heat))):
-            for j in range(len(list(result_df_heat))):
-                if result_df_heat.iat[i,j] > 0.4:
-                    text = ax[2].text(j, i, f'{stdev_df.iat[i, j]:.2f}',
-                                      ha="center", va="center", color="black")
-                else:
-                    text = ax[2].text(j, i, f'{stdev_df.iat[i, j]:.2f}',
-                                   ha="center", va="center", color="w")
+        self._plot_heat_map(ax=self.ax[0], loc_to_site_dict=self.loc_to_site_dict, result_df=self.result_df)
+        # self._plot_heat_map(ax=self.ax[3], loc_to_site_dict=self.loc_to_site_dict, result_df=self.stdev_df)
         # result_df.plot.bar(ax=ax[2], yerr=stdev_df)
 
         plt.tight_layout()
         plt.savefig(f's_fig_braycurtis_sqrt.png', dpi=600)
         plt.savefig(f's_fig_braycurtis_sqrt.svg', dpi=600)
+
+    def _calc_pw_distances(self):
+        for site_self in self.result_df.index:
+            for site_compare in list(self.result_df):
+                # Here we do the computations
+                if site_self == site_compare:
+                    # Then we want to be doing the within site average distance
+                    # Get a list of the sites
+                    self._within_site_av_distance(site_compare, site_self)
+                elif site_compare == 'between_all':
+                    # then we want to be doing the overall distance to other sites
+                    self._overall_dist_to_other_sites(site_compare, site_self)
+                else:
+                    # Then we want to be doing the specific between site average distance
+                    self._between_site_average_dist(site_compare, site_self)
+
+    def _within_site_av_distance(self, site_compare, site_self):
+        samples = self.meta_df[self.meta_df['loc'] == site_self].index
+        tot_dist = [self.dist_df.at[site_1, site_2] for (site_1, site_2) in itertools.combinations(samples, 2)]
+        self.result_df.at[site_self, site_compare] = sum(tot_dist) / len(tot_dist)
+        self.stdev_df.at[site_self, site_compare] = np.std(tot_dist)
+
+    def _overall_dist_to_other_sites(self, site_compare, site_self):
+        samples = self.meta_df[self.meta_df['loc'] == site_self].index
+        other_samples = self.meta_df[self.meta_df['loc'] != site_self].index
+        tot_dist = []
+        for s in samples:
+            for o_s in other_samples:
+                tot_dist.append(self.dist_df.at[s, o_s])
+        self.result_df.at[site_self, site_compare] = sum(tot_dist) / len(tot_dist)
+        self.stdev_df.at[site_self, site_compare] = np.std(tot_dist)
+
+    def _between_site_average_dist(self, site_compare, site_self):
+        samples_in = self.meta_df[self.meta_df['loc'] == site_self].index
+        samples_out = self.meta_df[self.meta_df['loc'] == site_compare].index
+        tot_dist = []
+        for s_in in samples_in:
+            for s_out in samples_out:
+                tot_dist.append(self.dist_df.at[s_in, s_out])
+        self.result_df.at[site_self, site_compare] = sum(tot_dist) / len(tot_dist)
+        self.stdev_df.at[site_self, site_compare] = np.std(tot_dist)
+
+    def _plot_pcoa_plots(self, a1_samples):
+        pcoa_df_raw = pcoa(self.dist_df)
+        self.pcoa_df = pcoa_df_raw.samples
+        self.pcoa_df.index = self.dist_df.index
+        self.colours = []
+        # We want to differentiate between the sites with symbols as well as colours
+        # for colourblind.
+        self.shape_dict = {loc: symbol for loc, symbol in zip(self.unique_loc, reversed(["o", "s", "+", "^", "1"]), )}
+        cols = reversed([d['color'] for d in list(mpl.rcParams["axes.prop_cycle"][:len(self.site_names)])])
+        self.col_dict = {loc: col for loc, col in zip(self.unique_loc, cols)}
+        for loc in self.unique_loc:
+            samples = self.meta_df[self.meta_df['loc'] == loc].index
+            scat = self.ax[1].plot(self.pcoa_df.loc[samples, 'PC1'], self.pcoa_df.loc[samples, 'PC2'], linestyle='none',
+                                   label=loc, marker=self.shape_dict[loc], fillstyle='none', c=self.col_dict[loc])
+            self.colours.append(scat[0].get_color())
+        self.ax[1].set_xlabel(f'PC1 {pcoa_df_raw.proportion_explained[0]:.2f}')
+        self.ax[1].set_ylabel(f'PC2 {pcoa_df_raw.proportion_explained[1]:.2f}')
+        # Plot an arrow next to the A1 samples
+        a1_samples_pcoa_one = [_ for _ in self.pcoa_df.index if _ in a1_samples]
+        scat = self.ax[1].plot(self.pcoa_df.loc[a1_samples_pcoa_one, 'PC1'] + 0.04,
+                               self.pcoa_df.loc[a1_samples_pcoa_one, 'PC2'],
+                               linestyle='none', marker='<', c='black')
+        for loc, c in zip(self.unique_loc, self.colours):
+            samples = self.meta_df[self.meta_df['loc'] == loc].index
+            self.ax[2].plot(self.pcoa_df.loc[samples, 'PC1'], self.pcoa_df.loc[samples, 'PC3'], c=c,
+                            label=self.loc_to_site_dict[loc],
+                            linestyle='none', marker=self.shape_dict[loc], fillstyle='none')
+        self.ax[2].set_xlabel(f'PC1 {pcoa_df_raw.proportion_explained[0]:.2f}')
+        self.ax[2].set_ylabel(f'PC3 {pcoa_df_raw.proportion_explained[2]:.2f}')
+        self.ax[2].legend(loc='upper right', fontsize='x-small')
+        # Plot an arrow next to the A1 samples
+        scat = self.ax[2].plot(self.pcoa_df.loc[a1_samples_pcoa_one, 'PC1'] + 0.04,
+                               self.pcoa_df.loc[a1_samples_pcoa_one, 'PC3'],
+                               linestyle='none', marker='<', c='black')
+        self._set_lims(ax=self.ax[1])
+        self._set_lims(ax=self.ax[2])
+        self.ax[1].set_aspect('equal', 'box')
+        self.ax[2].set_aspect('equal', 'box')
+
+    def _make_dist_df(self):
+        path_to_dist = '2020-06-09_11-59-06.357078_braycurtis_sample_distances_A_sqrt.dist'
+        with open(path_to_dist, 'r') as f:
+            d = [_.rstrip().split('\t') for _ in f]
+        samples = [_[0] for _ in d]
+        ids = [_[1] for _ in d]
+        data = [_[2:] for _ in d]
+        id_to_name_dict = {uid: name for uid, name in zip(ids, samples)}
+        dist_df = pd.DataFrame(data, index=samples, columns=samples).astype(float)
+        to_drop = ['S1_H2O', 'S3_H2O', 'extraction_neg', 'milliq_neg']
+        dist_df = dist_df.drop(columns=to_drop, index=to_drop)
+        id_to_name_dict = {uid: id_to_name_dict[uid] for uid, name in id_to_name_dict.items() if name in dist_df.index}
+        return dist_df, to_drop, id_to_name_dict
+
+    def _make_meta_df(self, path_to_meta, to_drop):
+        self.meta_df = pd.read_csv(path_to_meta, sep='\t')
+        self.meta_df = self.meta_df.iloc[:-3, ]
+        self.meta_df.set_index('sample_name', drop=True, inplace=True)
+        self.meta_df = self.meta_df.drop(index=to_drop)
+        self.meta_df = self.meta_df.loc[:, ['collection_latitude', 'collection_longitude']]
+        self.meta_df['loc'] = [f'{latitude},{longitude}' for longitude, latitude in
+                               zip(self.meta_df['collection_longitude'], self.meta_df['collection_latitude'])]
+        self.meta_df.sort_values(by='collection_latitude', inplace=True, ascending=False)
+
+    def _plot_heat_map(self, ax, loc_to_site_dict, result_df):
+        result_df = result_df.astype(float)
+        result_df.columns = [loc_to_site_dict[_] if _ in loc_to_site_dict else 'between_all' for _ in list(result_df)]
+        result_df.index = [loc_to_site_dict[_] if _ in loc_to_site_dict else 'between_all' for _ in
+                           result_df.index.values]
+        result_df_heat = result_df.iloc[:, :-1]
+        result_df_heat = result_df_heat.where(np.tril(np.ones(result_df_heat.shape)).astype(np.bool))
+        heat_map = ax.imshow(result_df_heat)
+        ax.set_xticks(np.arange(len(list(result_df_heat))))
+        ax.set_yticks(np.arange(len(result_df_heat.index)))
+        # ... and label them with the respective list entries
+        ax.set_xticklabels(list(result_df_heat), rotation='vertical')
+        ax.set_yticklabels(result_df_heat.index.values)
+        plt.colorbar(mappable=heat_map, ax=ax)
+        for i in range(len(list(result_df_heat))):
+            for j in range(len(list(result_df_heat))):
+                if result_df_heat.iat[i, j] > 0.4:
+                    text = ax.text(j, i, f'{result_df_heat.iat[i, j]:.2f}\n+/- {self.stdev_df.iat[i,j]:.2f}',
+                                      ha="center", va="center", color="black", fontsize='x-small')
+                else:
+                    text = ax.text(j, i, f'{result_df_heat.iat[i, j]:.2f}\n+/- {self.stdev_df.iat[i,j]:.2f}',
+                                      ha="center", va="center", color="w", fontsize='x-small')
+
     def _set_lims(self, ax):
         # Get the longest side and then set the small side to be the same length
         x_len = ax.get_xlim()[1] - ax.get_xlim()[0]
