@@ -8,6 +8,10 @@ import numpy as np
 import itertools
 from skbio.stats.distance import permanova, DistanceMatrix, permdisp
 import ecopy as ep
+from Bio import SeqIO
+from collections import Counter
+from matplotlib.patches import Circle
+from collections import defaultdict
 
 DEGREE_SIGN = u'\N{DEGREE SIGN}'
 
@@ -36,6 +40,7 @@ class Susann:
         # The group names
         group_names = [str(_).split('_')[0] for _ in self.abund_df.index]
         simper_result = ep.simper(data=self.abund_df, factor=group_names)
+        simper_result.to_csv('simper_output.csv', sep=',', header=True, index=True)
         self._make_meta_df(path_to_meta, to_drop)
         self.unique_loc = self.meta_df['loc'].unique()
         self.site_names = [
@@ -223,4 +228,90 @@ class Susann:
             ax.set_ylim(y_min, y_max)
             ax.set_aspect('equal', 'box')
             return
-Susann()
+
+class HaploPies:
+    """
+    Quick utility class for quantifying the haplotypes that were found in the Pappas and webber data
+    """
+    def __init__(self):
+        self.path_to_msa = '/Users/benjaminhume/Documents/projects/susann_clams/mol_ecol/dryad_files/pappas_weber_alignment.fasta'
+        self.fig, self.ax = plt.subplots(2,3, figsize=(20,20))
+        with open(self.path_to_msa, "r") as handle:
+            record_list = list(SeqIO.parse(handle, "fasta"))
+
+        # One of the Webber sequences has an 'n' in the sequence right at the position of one of the
+        # haplotype defining nucleotide positions of the pappas dataset.
+        # For the sake of this analysis we will return this to consensus.
+        for i in range(len(record_list)):
+            if '69004' in record_list[i].name:
+                foo = 'bar'
+            record_list[i].seq._data = record_list[i].seq._data.replace('n', 'g')
+
+
+        # NB there are many errors in the Webber dataset.
+        # In the thesis the locations of the reefs are wrong in the table but right in the
+        # M and M section.
+        # The sequence accession names have the wrong abbreviations in them too for some of the samples
+        # I have used the locations from the thesis table instead.
+        # I create a dictionary here to do so.
+        self.loc_dict = {
+            "GU068991": 'Dahab', "GU069006": 'Dahab', "GU069005": "Dahab",
+            "GU069004": "Dahab", "GU069003": "Dahab", "GU068995": "Ras Nasrani",
+            "GU068984": "Ras Nasrani", "GU068994": "Ras Nasrani", "GU068993": "Ras Nasrani",
+            "GU068992": "Ras Nasrani", "GU068990": "Hurghada", "GU068989": "Hurghada", "GU069002": "Hurghada",
+            "GU069001": "Hurghada", "GU069000": "Hurghada", "GU068999": "El Qeseir", "GU068998": "El Qeseir",
+            "GU068997": "El Qeseir", "GU068988": "El Qeseir", "GU068996": "El Qeseir"
+        }
+
+        seq_count = Counter([r.seq for r in record_list])
+        hap_one, hap_two, hap_three = [tup for tup in sorted(seq_count.items(), key=lambda x: x[1], reverse=True)[:3]]
+        self.g_dict = {'other': "white", str(hap_one[0]): "#E7E7E7", str(hap_two[0]): "#A5A5A5", str(hap_three[0]): "#5C5C5C"}
+        # plot one is the circles to scale
+        for i, hap in enumerate([hap_one, hap_two, hap_three]):
+            circle = Circle((i,0), radius=hap[1]/250, color=self.g_dict[str(hap[0])])
+            self.ax[0, 0].add_patch(circle)
+        self.ax[0, 0].set_xlim((-0.75, 2.25))
+        self.ax[0, 0].set_ylim((-1.5, 1.5))
+
+
+        # Now plot up pie charts for the individual sites
+        for ax, site in zip(
+                [self.ax[0,1], self.ax[0,2], self.ax[1,0], self.ax[1,1], self.ax[1,2]],
+                ['Dahab', 'Ras Nasrani', 'Hurghada', 'El Qeseir', 'Thuwal']):
+            # collect the abundances of each haplotypes
+            count_dd = defaultdict(int)
+            for r in record_list:
+                assession = r.name.split('.')[0]
+                try:
+                    if self.loc_dict[assession] == site:
+                        if str(r.seq) == str(hap_one[0]):
+                            count_dd['hap_one'] += 1
+                        elif str(r.seq) == str(hap_two[0]):
+                            count_dd['hap_two'] += 1
+                        elif str(r.seq) == str(hap_three[0]):
+                            count_dd['hap_three'] += 1
+                        else:
+                            count_dd['other'] += 1
+                except KeyError:
+                    # Then this is a Pappas sequence
+                    assert(r.name.startswith('LT'))
+                    if site == 'Thuwal':
+                        if str(r.seq) == str(hap_one[0]):
+                            count_dd['hap_one'] += 1
+                        elif str(r.seq) == str(hap_two[0]):
+                            count_dd['hap_two'] += 1
+                        elif str(r.seq) == str(hap_three[0]):
+                            count_dd['hap_three'] += 1
+                        else:
+                            count_dd['other'] += 1
+            ax.pie(
+                x=[count_dd[_] for _ in ['hap_one', 'hap_two', 'hap_three', 'other']],
+                labels=None,
+                colors=[self.g_dict[_] for _ in [str(hap_one[0]), str(hap_two[0]), str(hap_three[0]), 'other']]
+            )
+            ax.set_title(site)
+
+        plt.savefig('haplotype.svg')
+        foo = 'bar'
+
+HaploPies()
