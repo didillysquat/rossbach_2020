@@ -19,6 +19,9 @@ DEGREE_SIGN = u'\N{DEGREE SIGN}'
 
 class Water:
     def __init__(self):
+        """
+        Produces a venn diagram showing sequences in common between three regions and stats used in the paper.
+        """
         self.fig, self.ax = plt.subplots(1, 1, figsize=self._cm2inch(8.9, 8.9))
 
         # Make uid name dicts
@@ -423,17 +426,17 @@ class HaploPies:
 
 # Plot the venn diagram and output the sequence sets
 Water()
-# s = Susann()
-#
-# # Compute the PERMANOVA and PERMDISP2
-# s.permanova_permdisp()
-# # Conduct the SIMPER analysis
-# s.conduct_simper()
-# # Plot the pcoa plot and heatmap
-# s.plot_pcoa_heatmap()
-#
-#
-# # Utility class for producing the haplotype circles
-# h = HaploPies()
-# h.plot_haplotypes()
+s = Susann()
+
+# Compute the PERMANOVA and PERMDISP2
+s.permanova_permdisp()
+# Conduct the SIMPER analysis
+s.conduct_simper()
+# Plot the pcoa plot and heatmap
+s.plot_pcoa_heatmap()
+
+
+# Utility class for producing the haplotype circles
+h = HaploPies()
+h.plot_haplotypes()
 
