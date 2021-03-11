@@ -2,6 +2,8 @@
 This repo contains the Python script and associated data to generate the ordination
 and between-sample distance figure in the manuscript.
 
+Open Access publication available here: https://onlinelibrary.wiley.com/doi/10.1002/ece3.7299
+
 The generated figure is:
 ![dist_fig](./s_fig_braycurtis_sqrt.svg?)
 
